@@ -35,6 +35,7 @@ export async function handleDatabaseProperties(req: Request, env: Env): Promise<
 	const limit = parseInt(url.searchParams.get('limit') || '50');
 	const minPrice = url.searchParams.get('min_price');
 	const maxPrice = url.searchParams.get('max_price');
+	const hasDetails = url.searchParams.get('hasDetails');
 
 	try {
 		let query = `
@@ -60,6 +61,13 @@ export async function handleDatabaseProperties(req: Request, env: Env): Promise<
 		if (maxPrice) {
 			query += ` AND p.price <= ?`;
 			params.push(parseInt(maxPrice));
+		}
+		if (hasDetails !== null) {
+			if (hasDetails === 'true') {
+				query += ` AND p.has_details = TRUE`;
+			} else if (hasDetails === 'false') {
+				query += ` AND (p.has_details = FALSE OR p.has_details IS NULL)`;
+			}
 		}
 
 		query += ` ORDER BY p.created_at DESC LIMIT ?`;

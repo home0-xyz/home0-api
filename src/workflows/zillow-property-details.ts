@@ -15,28 +15,31 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 
 		console.log(`Starting property details collection for ${zpids.length} properties, batch size: ${batchSize}`);
 
-		// Step 1: Validate zpids exist in database
-		const validZpids = await step.do('validate-zpids', async () => {
+		// Step 1: Validate zpids exist in database and get their URLs
+		const validPropertiesData = await step.do('validate-zpids-and-get-urls', async () => {
 			if (zpids.length === 0) {
 				throw new Error('No zpids provided');
 			}
 
-			// Check which zpids exist in our database and don't already have details
+			// Check which zpids exist in our database and don't already have details, and get their URLs
 			const placeholders = zpids.map(() => '?').join(',');
 			const query = `
-				SELECT zpid FROM properties
+				SELECT zpid, url FROM properties
 				WHERE zpid IN (${placeholders})
 				AND (has_details = FALSE OR has_details IS NULL)
 			`;
 
 			const result = await this.env.DB.prepare(query).bind(...zpids).all();
-			const validZpids = result.results.map((row: any) => row.zpid);
+			const validPropertiesData = result.results.map((row: any) => ({
+				zpid: row.zpid,
+				url: row.url
+			}));
 
-			console.log(`Found ${validZpids.length} valid zpids out of ${zpids.length} requested`);
-			return validZpids;
+			console.log(`Found ${validPropertiesData.length} valid properties out of ${zpids.length} requested`);
+			return validPropertiesData;
 		});
 
-		if (validZpids.length === 0) {
+		if (validPropertiesData.length === 0) {
 			return {
 				success: true,
 				message: 'No properties need detail collection',
@@ -46,11 +49,11 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 			};
 		}
 
-		// Step 2: Process zpids in batches
+		// Step 2: Process properties in batches
 		const results = await step.do('process-property-details', async () => {
 			const batches = [];
-			for (let i = 0; i < validZpids.length; i += batchSize) {
-				batches.push(validZpids.slice(i, i + batchSize));
+			for (let i = 0; i < validPropertiesData.length; i += batchSize) {
+				batches.push(validPropertiesData.slice(i, i + batchSize));
 			}
 
 			console.log(`Processing ${batches.length} batches`);
@@ -61,16 +64,18 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 				console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} properties`);
 
 				try {
-					// Submit BrightData request for property details
-					const requestBody = batch.map(zpid => ({
-						zpid: zpid,
-						property_url: `https://www.zillow.com/homedetails/${zpid}_zpid/`
-					}));
+					// Submit BrightData request for property details using actual URLs
+					const requestBody = batch.map(property => {
+						// Use the stored URL if available, fallback to generic URL construction
+						const url = property.url || `https://www.zillow.com/homedetails/${property.zpid}_zpid/`;
+						return { url: url };
+					});
 
-					console.log('Submitting BrightData property details request for batch:', batch);
+					console.log('Submitting BrightData property details request for batch:', batch.map(p => p.zpid));
+					console.log('Using URLs:', requestBody.map(r => r.url));
 
 					const response = await fetch(
-						'https://api.brightdata.com/datasets/v3/trigger?dataset_id=gd_l7q7dkz5ng4g9bckr&include_errors=true&type=discover_new&discover_by=input_filters',
+						'https://api.brightdata.com/datasets/v3/trigger?dataset_id=gd_m794g571225l6vm7gh&include_errors=true',
 						{
 							method: 'POST',
 							headers: {
@@ -109,19 +114,43 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 						);
 
 						if (!statusResponse.ok) {
+							// Handle specific HTTP status codes
+							if (statusResponse.status === 400) {
+								const errorText = await statusResponse.text();
+								if (errorText.includes('Snapshot is empty')) {
+									console.warn(`Batch ${batchIndex + 1} returned empty snapshot - no properties found`);
+									completedData = { status: 'ready', data: [] };
+									break;
+								}
+							}
+
 							retryCount++;
-							console.warn(`Status check failed for batch ${batchIndex + 1}, attempt ${retryCount}`);
+							console.warn(`Status check failed for batch ${batchIndex + 1}, attempt ${retryCount}, status: ${statusResponse.status}`);
 							continue;
 						}
 
 						const responseText = await statusResponse.text();
+						console.log(`Response text length: ${responseText.length}, first 200 chars:`, responseText.substring(0, 200));
 						let statusData: any;
 
 						try {
 							statusData = JSON.parse(responseText);
+							console.log('Parsed as single JSON:', { status: statusData.status, hasData: !!statusData.data, keys: Object.keys(statusData) });
+
+							// If response doesn't have a status field but has zpid, it's likely the actual property data
+							if (!statusData.status && statusData.zpid) {
+								console.log('Response appears to be property data, not status - treating as ready');
+								statusData = {
+									status: 'ready',
+									data: [statusData]
+								};
+							}
 						} catch (parseError) {
-							// Handle NDJSON format
+							console.warn('Failed to parse as single JSON:', parseError instanceof Error ? parseError.message : 'Unknown parse error');
+							// Handle NDJSON format (multiple JSON objects, one per line)
 							const lines = responseText.trim().split('\n');
+							console.log(`Response has ${lines.length} lines, attempting NDJSON parse`);
+
 							if (lines.length > 1) {
 								const parsedLines = lines.map(line => {
 									try {
@@ -132,30 +161,54 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 								}).filter(Boolean);
 
 								if (parsedLines.length > 0) {
+									console.log(`Successfully parsed ${parsedLines.length} JSON objects from NDJSON`);
 									statusData = {
 										status: 'ready',
 										data: parsedLines
 									};
 								}
+							} else {
+								console.warn(`Failed to parse response as JSON: ${responseText.substring(0, 200)}`);
+								retryCount++;
+								continue;
 							}
 						}
 
 						if (!statusData) {
+							console.warn(`No valid statusData parsed for batch ${batchIndex + 1}`);
 							retryCount++;
 							continue;
 						}
 
 						console.log(`Batch ${batchIndex + 1} status:`, statusData.status);
+						console.log(`Batch ${batchIndex + 1} statusData keys:`, Object.keys(statusData));
+						console.log(`Batch ${batchIndex + 1} statusData structure:`, {
+							hasStatus: 'status' in statusData,
+							statusValue: statusData.status,
+							statusType: typeof statusData.status,
+							hasData: 'data' in statusData,
+							dataLength: statusData.data ? statusData.data.length : 'no data'
+						});
 
+						// Handle different status responses
 						if (statusData.status === 'failed') {
-							throw new Error(`BrightData collection failed for batch ${batchIndex + 1}`);
+							throw new Error(`BrightData collection failed for batch ${batchIndex + 1}: ${statusData.message || 'Unknown error'}`);
 						}
 
-						if (statusData.status === 'ready') {
+						if (statusData.status === 'running') {
+							console.log(`Batch ${batchIndex + 1} still processing: ${statusData.message || 'Processing...'}`);
+							retryCount++;
+							continue;
+						}
+
+						// Status is ready, or we have NDJSON data
+						if (statusData.status === 'ready' || statusData.data) {
 							completedData = statusData;
 							break;
 						}
 
+						// If we get here, the status is unknown
+						console.warn(`Unknown status for batch ${batchIndex + 1}:`, statusData);
 						retryCount++;
 					}
 
@@ -175,7 +228,7 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 
 					batchResults.push({
 						batchIndex: batchIndex + 1,
-						zpids: batch,
+						zpids: batch.map(p => p.zpid),
 						dataCount: detailsData.length,
 						data: detailsData,
 						snapshotId: result.snapshot_id
@@ -185,7 +238,7 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 					console.error(`Error processing batch ${batchIndex + 1}:`, error);
 					batchResults.push({
 						batchIndex: batchIndex + 1,
-						zpids: batch,
+						zpids: batch.map(p => p.zpid),
 						error: error instanceof Error ? error.message : 'Unknown error',
 						dataCount: 0
 					});
@@ -213,27 +266,34 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 							continue;
 						}
 
+						// Normalize zpid format to match database (ensure .0 suffix)
+						const normalizedZpid = property.zpid.toString().includes('.') ? property.zpid.toString() : `${property.zpid}.0`;
+						console.log(`Normalizing zpid: ${property.zpid} -> ${normalizedZpid}`);
+
+						// Create property object with normalized zpid for database operations
+						const normalizedProperty = { ...property, zpid: normalizedZpid };
+
 						// Insert property details
-						await insertPropertyDetails(this.env.DB, property);
+						await insertPropertyDetails(this.env.DB, normalizedProperty);
 
 						// Insert photos if available
 						if (property.responsive_photos && Array.isArray(property.responsive_photos)) {
-							await insertPropertyPhotos(this.env.DB, property.zpid, property.responsive_photos);
+							await insertPropertyPhotos(this.env.DB, normalizedZpid, property.responsive_photos);
 						}
 
 						// Insert price history if available
 						if (property.price_history && Array.isArray(property.price_history)) {
-							await insertPriceHistory(this.env.DB, property.zpid, property.price_history);
+							await insertPriceHistory(this.env.DB, normalizedZpid, property.price_history);
 						}
 
 						// Insert tax history if available
 						if (property.tax_history && Array.isArray(property.tax_history)) {
-							await insertTaxHistory(this.env.DB, property.zpid, property.tax_history);
+							await insertTaxHistory(this.env.DB, normalizedZpid, property.tax_history);
 						}
 
 						// Insert schools if available
 						if (property.schools && Array.isArray(property.schools)) {
-							await insertSchools(this.env.DB, property.zpid, property.schools);
+							await insertSchools(this.env.DB, normalizedZpid, property.schools);
 						}
 
 						// Mark property as having details
@@ -241,10 +301,10 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 							UPDATE properties
 							SET has_details = TRUE, updated_at = CURRENT_TIMESTAMP
 							WHERE zpid = ?
-						`).bind(property.zpid).run();
+						`).bind(normalizedZpid).run();
 
 						totalProcessed++;
-						console.log(`✅ Stored details for property ${property.zpid}`);
+						console.log(`✅ Stored details for property ${normalizedZpid}`);
 
 					} catch (error) {
 						totalErrors++;
@@ -305,7 +365,7 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 		return {
 			success: true,
 			requestedCount: zpids.length,
-			validCount: validZpids.length,
+			validCount: validPropertiesData.length,
 			processedCount: storageResults.totalProcessed,
 			errorCount: storageResults.totalErrors,
 			batchCount: results.length,

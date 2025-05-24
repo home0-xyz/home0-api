@@ -183,13 +183,31 @@ export async function insertTaxHistory(db: D1Database, zpid: string, taxHistory:
 export async function insertSchools(db: D1Database, zpid: string, schools: any[]) {
 	if (!schools || schools.length === 0) return;
 
-	const statements = schools.map(school =>
+	// Filter out schools without required data and clean the data
+	const validSchools = schools
+		.filter(school => school && school.name) // Only schools with a name
+		.map(school => ({
+			zpid,
+			name: school.name,
+			grades: school.grades || null,
+			rating: school.rating || null,
+			distance: school.distance || null,
+			link: school.link || null
+		}));
+
+	if (validSchools.length === 0) return;
+
+	const statements = validSchools.map(school =>
 		db.prepare(`
 			INSERT INTO schools (zpid, name, grades, rating, distance, link)
 			VALUES (?, ?, ?, ?, ?, ?)
 		`).bind(
-			zpid, school.name, school.grades, school.rating,
-			school.distance || null, school.link || null
+			school.zpid,
+			school.name,
+			school.grades,
+			school.rating,
+			school.distance,
+			school.link
 		)
 	);
 
