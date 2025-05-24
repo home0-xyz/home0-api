@@ -62,8 +62,9 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 			async () => {
 				console.log('Checking status for snapshot:', collectionRequest.snapshot_id);
 
+				// First, check just the status without downloading the full data
 				const statusResponse = await fetch(
-					`https://api.brightdata.com/datasets/v3/snapshot/${collectionRequest.snapshot_id}`,
+					`https://api.brightdata.com/datasets/v3/snapshots?dataset_id=gd_lfqkr8wm13ixtbd8f5&status=ready`,
 					{
 						headers: {
 							'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
@@ -75,108 +76,77 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 					throw new Error(`Status check failed: ${statusResponse.status}`);
 				}
 
-				// Get the full response text first to handle large data
-				const responseText = await statusResponse.text();
-				console.log('Status response size:', responseText.length);
+				const statusData = await statusResponse.json() as any[];
+				console.log('Found ready snapshots:', statusData.length || 0);
 
-				let statusData: any;
-				try {
-					statusData = JSON.parse(responseText);
-				} catch (parseError) {
-					console.error('Failed to parse response as single JSON, trying line-by-line parse');
+				// Check if our specific snapshot is in the ready list
+				const ourSnapshot = statusData.find((snap: any) => snap.snapshot_id === collectionRequest.snapshot_id);
 
-					// Try parsing as newline-delimited JSON (NDJSON)
-					const lines = responseText.trim().split('\n');
-					console.log('Found', lines.length, 'lines in response');
-
-					if (lines.length === 1) {
-						// Single line that failed to parse - this is the problematic case
-						console.error('Single line JSON parse failed, response too large or malformed');
-						console.log('Response start:', responseText.substring(0, 200));
-						console.log('Response end:', responseText.substring(responseText.length - 200));
-						throw new Error('Invalid JSON response from BrightData - response too large');
-					}
-
-					// Multiple lines - parse as NDJSON array
-					const parsedLines: any[] = [];
-					for (let i = 0; i < lines.length; i++) {
-						const line = lines[i].trim();
-						if (line) {
-							try {
-								parsedLines.push(JSON.parse(line));
-							} catch (lineError) {
-								console.error(`Failed to parse line ${i}:`, line.substring(0, 100));
-							}
-						}
-					}
-
-					if (parsedLines.length === 0) {
-						throw new Error('No valid JSON found in response');
-					}
-
-					// If we have multiple objects, the first might be metadata
-					if (parsedLines.length > 1 && parsedLines[0].status) {
-						statusData = parsedLines[0];
-						statusData.data = parsedLines.slice(1); // Rest are data records
-					} else {
-						// All data, no metadata
-						statusData = {
-							status: 'ready',
-							data: parsedLines
-						};
-					}
-				}
-
-				console.log('Current status:', statusData.status);
-
-				if (statusData.status === 'failed') {
-					throw new Error('BrightData collection failed');
-				}
-
-				if (statusData.status !== 'ready') {
+				if (!ourSnapshot) {
+					console.log('Snapshot not yet ready');
 					throw new Error('Still processing...'); // Triggers retry
 				}
 
-				// If ready, return the full response including embedded data
-				return statusData;
+				console.log('Snapshot is ready! Dataset size:', ourSnapshot.dataset_size);
+
+				// Now fetch the actual data using JSONL format
+				console.log('Fetching data using JSONL format...');
+				const dataResponse = await fetch(
+					`https://api.brightdata.com/datasets/v3/snapshot/${collectionRequest.snapshot_id}?format=jsonl`,
+					{
+						headers: {
+							'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
+						}
+					}
+				);
+
+				if (!dataResponse.ok) {
+					throw new Error(`Data fetch failed: ${dataResponse.status}`);
+				}
+
+				// Get the response as text to handle JSONL format
+				const responseText = await dataResponse.text();
+				console.log('Data response size:', responseText.length);
+
+				// Parse JSONL - each line is a separate JSON object
+				const lines = responseText.trim().split('\n');
+				console.log('Found', lines.length, 'properties in JSONL format');
+
+				const data = [];
+				for (const line of lines) {
+					if (line.trim()) {
+						try {
+							const property = JSON.parse(line);
+							data.push(property);
+						} catch (parseError) {
+							console.error('Failed to parse JSONL line:', parseError);
+							console.error('Line preview:', line.substring(0, 200) + '...');
+						}
+					}
+				}
+
+				console.log('Successfully parsed', data.length, 'properties from JSONL');
+
+				return {
+					status: 'ready',
+					data: data,
+					snapshot_id: collectionRequest.snapshot_id,
+					dataset_size: ourSnapshot.dataset_size
+				};
 			}
 		);
 
-		// Step 3: Extract the data (no separate download needed - data is embedded)
+		// Step 3: Extract the data (data is now directly available from JSONL)
 		const rawZillowData = await step.do('extract-zillow-data', async () => {
-			console.log('Extracting embedded data from response');
+			console.log('Extracting data from JSONL response');
 
-			// Check if data is embedded directly in the response
+			// Data is already parsed from JSONL format
 			if (completedData.data && Array.isArray(completedData.data)) {
-				console.log('Found embedded data array with length:', completedData.data.length);
+				console.log('Found parsed data array with length:', completedData.data.length);
 				return completedData.data;
 			}
 
-			// Check if data is in the root of the response
-			if (Array.isArray(completedData)) {
-				console.log('Data appears to be the entire response array with length:', completedData.length);
-				return completedData;
-			}
-
-			// If there's still a download URL, use it as fallback
-			if (completedData.url) {
-				console.log('Downloading data from URL:', completedData.url);
-				const dataResponse = await fetch(completedData.url, {
-					headers: {
-						'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
-					}
-				});
-
-				if (!dataResponse.ok) {
-					throw new Error(`Failed to download data: ${dataResponse.status}`);
-				}
-
-				const data = await dataResponse.json() as any[];
-				console.log('Downloaded data, record count:', Array.isArray(data) ? data.length : 'unknown');
-				return data;
-			}
-
-			// If we can't find data anywhere, throw an error
+			// If we can't find data, throw an error
 			throw new Error('No data found in BrightData response');
 		});
 
