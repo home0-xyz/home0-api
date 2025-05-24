@@ -28,6 +28,13 @@
 			"binding": "ZILLOW_DATA_BUCKET",
 			"bucket_name": "zillow-data-pipeline"
 		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "zillow-data-db",
+			"database_id": "830966ca-1199-4d48-b8c9-d4b890b3d670"
+		}
 	]
 	/**
 	 * Smart Placement
