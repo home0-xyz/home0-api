@@ -5,6 +5,11 @@ export async function storePropertiesInDatabase(db: D1Database, properties: any[
 
 	for (const property of properties) {
 		try {
+			// Normalize ZPID to string without decimal points
+			const zpid = typeof property.zpid === 'number' ?
+				Math.floor(property.zpid).toString() :
+				String(property.zpid);
+
 			// Insert basic property info
 			await insertProperty(db, property, collectionId);
 
@@ -14,32 +19,32 @@ export async function storePropertiesInDatabase(db: D1Database, properties: any[
 
 				// Insert photos
 				if (property.responsive_photos) {
-					await insertPropertyPhotos(db, property.zpid, property.responsive_photos);
+					await insertPropertyPhotos(db, zpid, property.responsive_photos);
 				}
 
 				// Insert price history
 				if (property.price_history) {
-					await insertPriceHistory(db, property.zpid, property.price_history);
+					await insertPriceHistory(db, zpid, property.price_history);
 				}
 
 				// Insert tax history
 				if (property.tax_history) {
-					await insertTaxHistory(db, property.zpid, property.tax_history);
+					await insertTaxHistory(db, zpid, property.tax_history);
 				}
 
 				// Insert schools
 				if (property.schools) {
-					await insertSchools(db, property.zpid, property.schools);
+					await insertSchools(db, zpid, property.schools);
 				}
 
 				// Mark as having details
 				await db.prepare(`
 					UPDATE properties SET has_details = TRUE, updated_at = CURRENT_TIMESTAMP
 					WHERE zpid = ?
-				`).bind(property.zpid).run();
+				`).bind(zpid).run();
 			}
 
-			console.log(`✅ Stored property ${property.zpid}`);
+			console.log(`✅ Stored property ${zpid}`);
 		} catch (error) {
 			console.error(`❌ Error storing property ${property.zpid}:`, error);
 		}

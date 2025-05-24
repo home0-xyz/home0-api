@@ -93,11 +93,14 @@ export async function handleDatabasePropertyDetails(req: Request, env: Env): Pro
 	}
 
 	const url = new URL(req.url);
-	const zpid = url.searchParams.get('zpid');
+	const zpidParam = url.searchParams.get('zpid');
 
-	if (!zpid) {
+	if (!zpidParam) {
 		return Response.json({ error: 'zpid parameter required' }, { status: 400 });
 	}
+
+	// Normalize ZPID (remove .0 if present)
+	const zpid = zpidParam.endsWith('.0') ? zpidParam.slice(0, -2) : zpidParam;
 
 	try {
 		// Get property with details

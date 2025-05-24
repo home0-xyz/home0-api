@@ -26,10 +26,13 @@ export async function handleZillowDetailsCollect(req: Request, env: Env): Promis
 			return Response.json({ error: 'All zpids must be valid strings or numbers' }, { status: 400 });
 		}
 
-		// Convert all zpids to strings
+		// Convert all zpids to strings and normalize them (remove .0 if present)
 		const normalizedParams = {
 			...params,
-			zpids: params.zpids.map(zpid => String(zpid))
+			zpids: params.zpids.map(zpid => {
+				const zpidStr = String(zpid);
+				return zpidStr.endsWith('.0') ? zpidStr.slice(0, -2) : zpidStr;
+			})
 		};
 
 		let instance = await env.ZILLOW_PROPERTY_DETAILS.create({ params: normalizedParams });

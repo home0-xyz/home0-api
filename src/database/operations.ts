@@ -22,6 +22,11 @@ export async function insertCollection(db: D1Database, collectionData: {
 }
 
 export async function insertProperty(db: D1Database, property: any, collectionId: string) {
+	// Ensure ZPID is a string without decimal points
+	const zpid = typeof property.zpid === 'number' ?
+		Math.floor(property.zpid).toString() :
+		String(property.zpid);
+
 	return await db.prepare(`
 		INSERT OR REPLACE INTO properties (
 			zpid, collection_id, url, street_address, city, state, zipcode,
@@ -30,7 +35,7 @@ export async function insertProperty(db: D1Database, property: any, collectionId
 			zestimate, rent_zestimate
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).bind(
-		property.zpid,
+		zpid,
 		collectionId,
 		property.url || null,
 		property.address?.street_address || property.street_address || null,
@@ -56,6 +61,11 @@ export async function insertProperty(db: D1Database, property: any, collectionId
 export async function insertPropertyDetails(db: D1Database, property: any) {
 	const resoFacts = property.reso_facts || {};
 
+	// Ensure ZPID is a string without decimal points
+	const zpid = typeof property.zpid === 'number' ?
+		Math.floor(property.zpid).toString() :
+		String(property.zpid);
+
 	return await db.prepare(`
 		INSERT OR REPLACE INTO property_details (
 			zpid, description, property_tax_rate, monthly_hoa_fee, parcel_id,
@@ -69,7 +79,7 @@ export async function insertPropertyDetails(db: D1Database, property: any) {
 			favorite_count, tour_view_count, raw_data
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).bind(
-		property.zpid,
+		zpid,
 		property.description || null,
 		property.property_tax_rate || null,
 		property.monthly_hoa_fee || null,
@@ -109,8 +119,11 @@ export async function insertPropertyDetails(db: D1Database, property: any) {
 	).run();
 }
 
-export async function insertPropertyPhotos(db: D1Database, zpid: string, photos: any[]) {
+export async function insertPropertyPhotos(db: D1Database, zpidParam: string, photos: any[]) {
 	if (!photos || photos.length === 0) return;
+
+	// Ensure ZPID is normalized (remove .0 if present)
+	const zpid = zpidParam.endsWith('.0') ? zpidParam.slice(0, -2) : zpidParam;
 
 	const statements = photos.map((photo, index) => {
 		const jpeg = photo.mixed_sources?.jpeg || [];
@@ -142,8 +155,11 @@ export async function insertPropertyPhotos(db: D1Database, zpid: string, photos:
 	return await db.batch(statements);
 }
 
-export async function insertPriceHistory(db: D1Database, zpid: string, priceHistory: any[]) {
+export async function insertPriceHistory(db: D1Database, zpidParam: string, priceHistory: any[]) {
 	if (!priceHistory || priceHistory.length === 0) return;
+
+	// Ensure ZPID is normalized (remove .0 if present)
+	const zpid = zpidParam.endsWith('.0') ? zpidParam.slice(0, -2) : zpidParam;
 
 	const statements = priceHistory.map(entry =>
 		db.prepare(`
@@ -161,8 +177,11 @@ export async function insertPriceHistory(db: D1Database, zpid: string, priceHist
 	return await db.batch(statements);
 }
 
-export async function insertTaxHistory(db: D1Database, zpid: string, taxHistory: any[]) {
+export async function insertTaxHistory(db: D1Database, zpidParam: string, taxHistory: any[]) {
 	if (!taxHistory || taxHistory.length === 0) return;
+
+	// Ensure ZPID is normalized (remove .0 if present)
+	const zpid = zpidParam.endsWith('.0') ? zpidParam.slice(0, -2) : zpidParam;
 
 	const statements = taxHistory.map(entry => {
 		const year = entry.time ? new Date(entry.time).getFullYear() : null;
@@ -180,8 +199,11 @@ export async function insertTaxHistory(db: D1Database, zpid: string, taxHistory:
 	return await db.batch(statements);
 }
 
-export async function insertSchools(db: D1Database, zpid: string, schools: any[]) {
+export async function insertSchools(db: D1Database, zpidParam: string, schools: any[]) {
 	if (!schools || schools.length === 0) return;
+
+	// Ensure ZPID is normalized (remove .0 if present)
+	const zpid = zpidParam.endsWith('.0') ? zpidParam.slice(0, -2) : zpidParam;
 
 	// Filter out schools without required data and clean the data
 	const validSchools = schools
