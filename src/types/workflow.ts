@@ -12,3 +12,11 @@ export type ZillowCollectionParams = {
 	daysOnZillow?: string;
 	exactAddress?: boolean;
 };
+
+// Parameters for zillow property details collection
+export type ZillowPropertyDetailsParams = {
+	zpids: string[];
+	batchSize?: number;
+	source?: 'manual' | 'auto' | 'collection_id';
+	collectionId?: string;
+};

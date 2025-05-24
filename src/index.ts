@@ -1,6 +1,7 @@
 import type { Env } from './types/env';
 import { MyWorkflow } from './workflows/my-workflow';
 import { ZillowDataCollector } from './workflows/zillow-data-collector';
+import { ZillowPropertyDetails } from './workflows/zillow-property-details';
 import {
 	handleZillowCollect,
 	handleZillowStatus,
@@ -8,6 +9,12 @@ import {
 	handleZillowDownload,
 	handleZillowTest81428
 } from './handlers/zillow';
+import {
+	handleZillowDetailsCollect,
+	handleZillowDetailsStatus,
+	handleZillowDetailsAuto,
+	handleZillowDetailsStats
+} from './handlers/zillow-details';
 import {
 	handleDatabaseCollections,
 	handleDatabaseProperties,
@@ -25,7 +32,7 @@ import {
 } from './handlers/debug';
 
 // Export workflow classes
-export { MyWorkflow, ZillowDataCollector };
+export { MyWorkflow, ZillowDataCollector, ZillowPropertyDetails };
 
 // Main fetch handler
 export default {
@@ -56,6 +63,23 @@ export default {
 
 		if (url.pathname === '/zillow/test-81428') {
 			return handleZillowTest81428(req, env);
+		}
+
+		// Zillow property details endpoints
+		if (url.pathname === '/zillow/details/collect') {
+			return handleZillowDetailsCollect(req, env);
+		}
+
+		if (url.pathname === '/zillow/details/status') {
+			return handleZillowDetailsStatus(req, env);
+		}
+
+		if (url.pathname === '/zillow/details/auto') {
+			return handleZillowDetailsAuto(req, env);
+		}
+
+		if (url.pathname === '/zillow/details/stats') {
+			return handleZillowDetailsStats(req, env);
 		}
 
 		// Database query endpoints

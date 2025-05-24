@@ -21,6 +21,11 @@
 			"name": "zillow-data-collector",
 			"binding": "ZILLOW_DATA_COLLECTOR",
 			"class_name": "ZillowDataCollector"
+		},
+		{
+			"name": "zillow-property-details",
+			"binding": "ZILLOW_PROPERTY_DETAILS",
+			"class_name": "ZillowPropertyDetails"
 		}
 	],
 	"r2_buckets": [
