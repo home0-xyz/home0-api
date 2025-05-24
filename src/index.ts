@@ -7,7 +7,8 @@ import {
 	handleZillowStatus,
 	handleZillowFiles,
 	handleZillowDownload,
-	handleZillowTest81428
+	handleZillowTest81428,
+	handleZillowTest81416
 } from './handlers/zillow';
 import {
 	handleZillowDetailsCollect,
@@ -63,6 +64,10 @@ export default {
 
 		if (url.pathname === '/zillow/test-81428') {
 			return handleZillowTest81428(req, env);
+		}
+
+		if (url.pathname === '/zillow/test-81416') {
+			return handleZillowTest81416(req, env);
 		}
 
 		// Zillow property details endpoints

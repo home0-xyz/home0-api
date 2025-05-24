@@ -136,3 +136,38 @@ export async function handleZillowTest81428(req: Request, env: Env): Promise<Res
 		}, { status: 500 });
 	}
 }
+
+export async function handleZillowTest81416(req: Request, env: Env): Promise<Response> {
+	if (req.method !== 'POST' && req.method !== 'GET') {
+		return Response.json({ error: 'Method not allowed' }, { status: 405 });
+	}
+
+	try {
+		const testParams: ZillowCollectionParams = {
+			location: '81416',
+			listingCategory: 'House for sale',
+			daysOnZillow: '7 days',
+			homeType: '',
+			exactAddress: false
+		};
+
+		let instance = await env.ZILLOW_DATA_COLLECTOR.create({ params: testParams });
+
+		return Response.json({
+			id: instance.id,
+			status: await instance.status(),
+			message: `Started test data collection for zip code 81416 (last 7 days)`,
+			testParams,
+			instructions: {
+				checkStatus: `GET /zillow/status?instanceId=${instance.id}`,
+				listFiles: `GET /zillow/files?location=81416`,
+				downloadFile: `GET /zillow/download?file=<filename>`
+			}
+		});
+	} catch (error) {
+		return Response.json({
+			error: 'Failed to start test collection',
+			details: error instanceof Error ? error.message : 'Unknown error'
+		}, { status: 500 });
+	}
+}

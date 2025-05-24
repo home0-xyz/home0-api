@@ -49,8 +49,8 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 		});
 
 		// Step 2: Poll for completion with exponential backoff
-		const completedData = await step.do(
-			'poll-for-completion',
+		const progressStatus = await step.do(
+			'wait-for-brightdata-completion',
 			{
 				retries: {
 					limit: 24, // 24 retries with exponential backoff should cover ~2 hours
@@ -60,11 +60,11 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 				timeout: '3 hours'
 			},
 			async () => {
-				console.log('Checking status for snapshot:', collectionRequest.snapshot_id);
+				console.log('Checking progress for snapshot:', collectionRequest.snapshot_id);
 
-				// First, check just the status without downloading the full data
-				const statusResponse = await fetch(
-					`https://api.brightdata.com/datasets/v3/snapshots?dataset_id=gd_lfqkr8wm13ixtbd8f5&status=ready`,
+				// Check the dataset progress using the correct endpoint
+				const progressResponse = await fetch(
+					`https://api.brightdata.com/datasets/v3/progress/${collectionRequest.snapshot_id}`,
 					{
 						headers: {
 							'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
@@ -72,71 +72,113 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 					}
 				);
 
-				if (!statusResponse.ok) {
-					throw new Error(`Status check failed: ${statusResponse.status}`);
-				}
-
-				const statusData = await statusResponse.json() as any[];
-				console.log('Found ready snapshots:', statusData.length || 0);
-
-				// Check if our specific snapshot is in the ready list
-				const ourSnapshot = statusData.find((snap: any) => snap.snapshot_id === collectionRequest.snapshot_id);
-
-				if (!ourSnapshot) {
-					console.log('Snapshot not yet ready');
-					throw new Error('Still processing...'); // Triggers retry
-				}
-
-				console.log('Snapshot is ready! Dataset size:', ourSnapshot.dataset_size);
-
-				// Now fetch the actual data using JSONL format
-				console.log('Fetching data using JSONL format...');
-				const dataResponse = await fetch(
-					`https://api.brightdata.com/datasets/v3/snapshot/${collectionRequest.snapshot_id}?format=jsonl`,
-					{
-						headers: {
-							'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
+				if (!progressResponse.ok) {
+					// Handle specific HTTP status codes
+					if (progressResponse.status === 400) {
+						const errorText = await progressResponse.text();
+						console.log('Progress check error:', errorText);
+						if (errorText.includes('Snapshot does not exist') || errorText.includes('does not exist')) {
+							console.log('Snapshot not found, might still be initializing...');
+							throw new Error('Snapshot not ready yet...'); // Triggers retry
 						}
 					}
-				);
-
-				if (!dataResponse.ok) {
-					throw new Error(`Data fetch failed: ${dataResponse.status}`);
+					console.log(`Progress check failed: ${progressResponse.status}`);
+					throw new Error(`Progress check failed: ${progressResponse.status} - ${await progressResponse.text()}`);
 				}
 
-				// Get the response as text to handle JSONL format
-				const responseText = await dataResponse.text();
-				console.log('Data response size:', responseText.length);
-
-				// Parse JSONL - each line is a separate JSON object
-				const lines = responseText.trim().split('\n');
-				console.log('Found', lines.length, 'properties in JSONL format');
-
-				const data = [];
-				for (const line of lines) {
-					if (line.trim()) {
-						try {
-							const property = JSON.parse(line);
-							data.push(property);
-						} catch (parseError) {
-							console.error('Failed to parse JSONL line:', parseError);
-							console.error('Line preview:', line.substring(0, 200) + '...');
-						}
-					}
-				}
-
-				console.log('Successfully parsed', data.length, 'properties from JSONL');
-
-				return {
-					status: 'ready',
-					data: data,
-					snapshot_id: collectionRequest.snapshot_id,
-					dataset_size: ourSnapshot.dataset_size
+				const progressData = await progressResponse.json() as {
+					status: string;
+					snapshot_id: string;
+					dataset_id: string;
+					records?: number;
+					errors?: number;
+					collection_duration?: number;
+					message?: string;
 				};
+				console.log('Progress data:', progressData);
+
+				// Check if the progress indicates completion
+				if (progressData.status === 'running' || progressData.status === 'pending') {
+					console.log(`Collection still ${progressData.status}...`);
+					throw new Error('Still processing...'); // Triggers retry
+				} else if (progressData.status === 'failed') {
+					throw new Error(`Collection failed: ${progressData.message || 'Unknown error'}`);
+				} else if (progressData.status === 'ready' || progressData.status === 'completed' || progressData.status === 'complete') {
+					console.log('Collection is ready!');
+					return {
+						status: progressData.status,
+						snapshot_id: collectionRequest.snapshot_id,
+						records: progressData.records || 0
+					};
+				}
+
+				// If we get here, we couldn't determine the status
+				console.warn('Unknown progress status:', progressData);
+				throw new Error(`Unknown progress status from BrightData: ${progressData.status}`);
 			}
 		);
 
-		// Step 3: Extract the data (data is now directly available from JSONL)
+		// Step 3: Fetch the actual data once we know it's ready
+		const completedData = await step.do('fetch-brightdata-data', async () => {
+			console.log('Fetching data for ready snapshot:', collectionRequest.snapshot_id);
+
+			// Fetch the actual data using the snapshot endpoint
+			const dataResponse = await fetch(
+				`https://api.brightdata.com/datasets/v3/snapshot/${collectionRequest.snapshot_id}?format=json`,
+				{
+					headers: {
+						'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
+					}
+				}
+			);
+
+			if (!dataResponse.ok) {
+				throw new Error(`Data fetch failed: ${dataResponse.status} - ${await dataResponse.text()}`);
+			}
+
+			const responseText = await dataResponse.text();
+			console.log('Data response length:', responseText.length);
+
+			// Parse JSONL data
+			let parsedData: any[] = [];
+
+			try {
+				// Try parsing as single JSON first
+				const singleJson = JSON.parse(responseText);
+				if (Array.isArray(singleJson)) {
+					parsedData = singleJson;
+				} else {
+					parsedData = [singleJson];
+				}
+			} catch (parseError) {
+				console.log('Not single JSON, trying JSONL parsing');
+
+				// Parse as JSONL (newline-delimited JSON)
+				const lines = responseText.trim().split('\n');
+				console.log('Found', lines.length, 'lines in JSONL');
+
+				for (let i = 0; i < lines.length; i++) {
+					const line = lines[i].trim();
+					if (line) {
+						try {
+							parsedData.push(JSON.parse(line));
+						} catch (lineError) {
+							console.error(`Failed to parse line ${i}:`, line.substring(0, 100));
+						}
+					}
+				}
+			}
+
+			console.log('Successfully parsed', parsedData.length, 'records');
+			return {
+				status: 'ready',
+				data: parsedData,
+				snapshot_id: collectionRequest.snapshot_id,
+				dataset_size: parsedData.length
+			};
+		});
+
+		// Step 4: Extract the data (data is now directly available from JSONL)
 		const rawZillowData = await step.do('extract-zillow-data', async () => {
 			console.log('Extracting data from JSONL response');
 
@@ -150,7 +192,7 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 			throw new Error('No data found in BrightData response');
 		});
 
-		// Step 4: Store raw data in R2 bucket
+		// Step 5: Store raw data in R2 bucket
 		const storageInfo = await step.do('store-data-in-r2', async () => {
 			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 			const fileName = `zillow-data/${location}/${timestamp}-${collectionRequest.snapshot_id}.json`;
@@ -184,7 +226,7 @@ export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectio
 			};
 		});
 
-		// Step 5: Store in database
+		// Step 6: Store in database
 		const dbStorageInfo = await step.do('store-data-in-database', async () => {
 			const collectionId = `collection_${Date.now()}_${collectionRequest.snapshot_id}`;
 
