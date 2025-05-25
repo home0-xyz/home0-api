@@ -15,6 +15,10 @@ import {
 	handleZillowDetailsAuto,
 	handleZillowDetailsStats
 } from './handlers/details';
+import {
+	handleBrightDataNotify,
+	handleBrightDataEndpoint
+} from './handlers/webhooks';
 
 export const zillowRouter = {
 	async handle(request: Request, env: Env): Promise<Response> {
@@ -70,6 +74,15 @@ export const zillowRouter = {
 
 		if (path === '/details/stats') {
 			return handleZillowDetailsStats(request, env);
+		}
+
+		// Webhook endpoints
+		if (path === '/webhooks/notify') {
+			return handleBrightDataNotify(request, env);
+		}
+
+		if (path === '/webhooks/endpoint') {
+			return handleBrightDataEndpoint(request, env);
 		}
 
 		return new Response('Not found', { status: 404 });

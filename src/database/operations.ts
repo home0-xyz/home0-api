@@ -6,10 +6,11 @@ export async function insertCollection(db: D1Database, collectionData: {
 	days_on_zillow?: string;
 	exact_address?: boolean;
 	snapshot_id: string;
+	workflow_id?: string;
 }) {
 	return await db.prepare(`
-		INSERT INTO collections (id, location, listing_category, home_type, days_on_zillow, exact_address, snapshot_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO collections (id, location, listing_category, home_type, days_on_zillow, exact_address, snapshot_id, workflow_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`).bind(
 		collectionData.id,
 		collectionData.location,
@@ -17,7 +18,8 @@ export async function insertCollection(db: D1Database, collectionData: {
 		collectionData.home_type || null,
 		collectionData.days_on_zillow || null,
 		collectionData.exact_address || false,
-		collectionData.snapshot_id
+		collectionData.snapshot_id,
+		collectionData.workflow_id || null
 	).run();
 }
 

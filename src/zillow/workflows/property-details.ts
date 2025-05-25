@@ -63,6 +63,13 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 				const batch = batches[batchIndex];
 				console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} properties`);
 
+				// Generate webhook URLs and secret for this batch
+				const webhookSecret = crypto.randomUUID();
+				const baseUrl = this.env.WORKER_URL || 'https://home0-platform.peteknowsai.workers.dev';
+				const notifyUrl = `${baseUrl}/zillow/webhooks/notify?secret=${webhookSecret}`;
+				const endpointUrl = `${baseUrl}/zillow/webhooks/endpoint?secret=${webhookSecret}`;
+				const authHeader = `Bearer ${webhookSecret}`;
+
 				try {
 					// Submit BrightData request for property details using actual URLs
 					const requestBody = batch.map(property => {
@@ -73,9 +80,20 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 
 					console.log('Submitting BrightData property details request for batch:', batch.map(p => p.zpid));
 					console.log('Using URLs:', requestBody.map(r => r.url));
+					console.log('Webhook URLs:', { notify: notifyUrl, endpoint: endpointUrl });
+
+					const queryParams = new URLSearchParams({
+						dataset_id: 'gd_m794g571225l6vm7gh',
+						include_errors: 'true',
+						notify: notifyUrl,
+						endpoint: endpointUrl,
+						auth_header: authHeader,
+						format: 'json',
+						uncompressed_webhook: 'true'
+					});
 
 					const response = await fetch(
-						'https://api.brightdata.com/datasets/v3/trigger?dataset_id=gd_m794g571225l6vm7gh&include_errors=true',
+						`https://api.brightdata.com/datasets/v3/trigger?${queryParams}`,
 						{
 							method: 'POST',
 							headers: {
@@ -93,6 +111,11 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 
 					const result = await response.json<BrightDataTriggerResponse>();
 					console.log('BrightData request submitted for batch, snapshot_id:', result.snapshot_id);
+
+					// Store snapshot mapping for webhook handling
+					await this.env.DB.prepare(
+						'INSERT INTO snapshot_workflow_mapping (snapshot_id, workflow_id, workflow_type, webhook_secret) VALUES (?, ?, ?, ?)'
+					).bind(result.snapshot_id, event.instanceId, 'property_details', webhookSecret).run();
 
 					// Poll for completion with retries
 					let completedData = null;

@@ -13,6 +13,7 @@ import {
 	handleDebugSnapshotStatus,
 	handleDebugDownloadReadyData
 } from './handlers/debug';
+import { requireApiKey, shouldRequireApiKey } from './shared/auth';
 
 // Export workflow classes - keep old names for compatibility
 export { ZillowDataCollector, ZillowPropertyDetails };
@@ -25,6 +26,14 @@ export default {
 		// Favicon - return 404
 		if (url.pathname.startsWith('/favicon')) {
 			return Response.json({}, { status: 404 });
+		}
+
+		// Check API key for protected endpoints
+		if (shouldRequireApiKey(url.pathname)) {
+			const authError = requireApiKey(req, env);
+			if (authError) {
+				return authError;
+			}
 		}
 
 		// Route to feature-specific routers

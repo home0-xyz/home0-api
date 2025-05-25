@@ -4,4 +4,9 @@ export type Env = {
 	ZILLOW_DATA_BUCKET: R2Bucket;
 	DB: D1Database;
 	BRIGHTDATA_API_TOKEN: string;
+	WEBHOOK_SECRET: string;
+	API_KEY: string;
+	ENVIRONMENT?: string;
+	WORKER_URL?: string;
+	CF?: any; // Cloudflare context
 };

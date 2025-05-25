@@ -14,6 +14,13 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 			exactAddress = false
 		} = event.payload;
 
+		// Determine if we're in production (has a public URL)
+		const isProduction = this.env.ENVIRONMENT === 'production' || 
+			(this.env.CF && this.env.CF.routes && this.env.CF.routes.length > 0);
+		
+		// Store workflow ID for webhook mapping
+		const workflowId = event.id || crypto.randomUUID();
+
 		// Step 1: Submit data collection request to BrightData
 		const collectionRequest = await step.do('submit-brightdata-request', async () => {
 			const requestBody = [{
@@ -25,9 +32,25 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 			}];
 
 			console.log('Submitting BrightData request for location:', location);
+			console.log('Using webhooks:', isProduction);
+
+			// Build URL with webhook parameters if in production
+			let apiUrl = 'https://api.brightdata.com/datasets/v3/trigger?dataset_id=gd_lfqkr8wm13ixtbd8f5&include_errors=true&type=discover_new&discover_by=input_filters';
+			
+			if (isProduction) {
+				// Get the worker URL
+				const workerUrl = this.env.WORKER_URL || 'https://home0-platform.peteknowsai.workers.dev';
+				
+				// Add webhook URLs with security secret
+				const secret = this.env.WEBHOOK_SECRET;
+				const notifyUrl = encodeURIComponent(`${workerUrl}/zillow/webhooks/notify?secret=${secret}`);
+				const endpointUrl = encodeURIComponent(`${workerUrl}/zillow/webhooks/endpoint?secret=${secret}`);
+				
+				apiUrl += `&notify=${notifyUrl}&endpoint=${endpointUrl}&format=json&uncompressed_webhook=true`;
+			}
 
 			const response = await fetch(
-				'https://api.brightdata.com/datasets/v3/trigger?dataset_id=gd_lfqkr8wm13ixtbd8f5&include_errors=true&type=discover_new&discover_by=input_filters',
+				apiUrl,
 				{
 					method: 'POST',
 					headers: {
@@ -45,21 +68,55 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 
 			const result = await response.json<BrightDataTriggerResponse>();
 			console.log('BrightData request submitted, snapshot_id:', result.snapshot_id);
+			
+			// Store workflow ID mapping for webhooks
+			if (isProduction) {
+				await this.env.DB.prepare(
+					'INSERT INTO collections (id, workflow_id, snapshot_id, location, listing_category, home_type, days_on_zillow, exact_address, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+				).bind(
+					`temp_${workflowId}`,
+					workflowId,
+					result.snapshot_id,
+					location,
+					listingCategory,
+					homeType,
+					daysOnZillow,
+					exactAddress,
+					'running'
+				).run();
+			}
+			
 			return result;
 		});
 
-		// Step 2: Poll for completion with exponential backoff
+		// Step 2: Wait for completion (webhook or polling)
 		const progressStatus = await step.do(
 			'wait-for-brightdata-completion',
 			{
 				retries: {
-					limit: 24, // 24 retries with exponential backoff should cover ~2 hours
-					delay: '30 seconds',
+					limit: isProduction ? 2 : 24, // Less retries needed with webhooks
+					delay: isProduction ? '5 minutes' : '30 seconds',
 					backoff: 'exponential'
 				},
 				timeout: '3 hours'
 			},
 			async () => {
+				// If using webhooks, check if data has been delivered
+				if (isProduction) {
+					const webhookData = await this.env.DB.prepare(
+						'SELECT * FROM collections WHERE workflow_id = ? AND snapshot_id = ?'
+					).bind(workflowId, collectionRequest.snapshot_id).first();
+					
+					if (webhookData && webhookData.status === 'completed') {
+						console.log('Data delivered via webhook!');
+						return {
+							status: 'ready',
+							snapshot_id: collectionRequest.snapshot_id,
+							records: webhookData.record_count || 0,
+							webhookDelivered: true
+						};
+					}
+				}
 				console.log('Checking progress for snapshot:', collectionRequest.snapshot_id);
 
 				// Check the dataset progress using the correct endpoint
@@ -240,7 +297,8 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 				home_type: homeType,
 				days_on_zillow: daysOnZillow,
 				exact_address: exactAddress,
-				snapshot_id: collectionRequest.snapshot_id
+				snapshot_id: collectionRequest.snapshot_id,
+				workflow_id: workflowId
 			});
 
 			// Store properties in database
