@@ -1,10 +1,10 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
-import type { Env } from '../types/env';
-import type { ZillowPropertyDetailsParams } from '../types/workflow';
-import type { BrightDataTriggerResponse } from '../types/zillow';
-import { insertPropertyDetails, insertPropertyPhotos, insertPriceHistory, insertTaxHistory, insertSchools } from '../database/operations';
+import type { Env } from '../../shared/types/env';
+import type { ZillowPropertyDetailsParams } from '../../shared/types/workflow';
+import type { BrightDataTriggerResponse } from '../types';
+import { storePropertyDetailsInDatabase } from '../../database/schema';
 
-export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetailsParams> {
+export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetailsParams> {
 	async run(event: WorkflowEvent<ZillowPropertyDetailsParams>, step: WorkflowStep) {
 		const {
 			zpids,
@@ -95,15 +95,47 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 					console.log('BrightData request submitted for batch, snapshot_id:', result.snapshot_id);
 
 					// Poll for completion with retries
-					let completedData;
+					let completedData = null;
 					let retryCount = 0;
 					const maxRetries = 20; // 20 retries with 30s delay = ~10 minutes max
 
-					while (retryCount < maxRetries) {
+					while (retryCount < maxRetries && !completedData) {
 						console.log(`Checking status for batch ${batchIndex + 1}, attempt ${retryCount + 1}`);
 
 						await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds
 
+						// First check the progress status
+						const progressResponse = await fetch(
+							`https://api.brightdata.com/datasets/v3/progress/${result.snapshot_id}`,
+							{
+								headers: {
+									'Authorization': `Bearer ${this.env.BRIGHTDATA_API_TOKEN}`
+								}
+							}
+						);
+
+						if (progressResponse.ok) {
+							const progressData = await progressResponse.json() as any;
+							console.log('Progress status:', {
+								status: progressData.status,
+								records: progressData.records,
+								errors: progressData.errors,
+								message: progressData.message
+							});
+
+							// If still running, continue polling
+							if (progressData.status === 'running' || progressData.status === 'pending') {
+								retryCount++;
+								continue;
+							}
+
+							// If failed, throw error
+							if (progressData.status === 'failed') {
+								throw new Error(`BrightData collection failed for batch ${batchIndex + 1}: ${progressData.message || 'Unknown error'}`);
+							}
+						}
+
+						// Try to get the snapshot data
 						const statusResponse = await fetch(
 							`https://api.brightdata.com/datasets/v3/snapshot/${result.snapshot_id}`,
 							{
@@ -122,6 +154,11 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 									completedData = { status: 'ready', data: [] };
 									break;
 								}
+								if (errorText.includes('Snapshot does not exist')) {
+									console.warn(`Snapshot not ready yet for batch ${batchIndex + 1}`);
+									retryCount++;
+									continue;
+								}
 							}
 
 							retryCount++;
@@ -131,85 +168,44 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 
 						const responseText = await statusResponse.text();
 						console.log(`Response text length: ${responseText.length}, first 200 chars:`, responseText.substring(0, 200));
-						let statusData: any;
-
+						
 						try {
-							statusData = JSON.parse(responseText);
-							console.log('Parsed as single JSON:', { status: statusData.status, hasData: !!statusData.data, keys: Object.keys(statusData) });
-
-							// If response doesn't have a status field but has zpid, it's likely the actual property data
-							if (!statusData.status && statusData.zpid) {
-								console.log('Response appears to be property data, not status - treating as ready');
-								statusData = {
-									status: 'ready',
-									data: [statusData]
-								};
+							// Try parsing as single JSON
+							const parsedData = JSON.parse(responseText);
+							
+							// If it's an array or has data property, we got the data
+							if (Array.isArray(parsedData)) {
+								completedData = { status: 'ready', data: parsedData };
+							} else if (parsedData.data) {
+								completedData = { status: 'ready', data: parsedData.data };
+							} else if (parsedData.zpid) {
+								// Single property data
+								completedData = { status: 'ready', data: [parsedData] };
 							}
 						} catch (parseError) {
-							console.warn('Failed to parse as single JSON:', parseError instanceof Error ? parseError.message : 'Unknown parse error');
-							// Handle NDJSON format (multiple JSON objects, one per line)
+							console.warn('Failed to parse as single JSON, trying NDJSON');
+
+							// Try parsing as NDJSON (newline-delimited JSON)
 							const lines = responseText.trim().split('\n');
-							console.log(`Response has ${lines.length} lines, attempting NDJSON parse`);
+							const parsedLines = [];
 
-							if (lines.length > 1) {
-								const parsedLines = lines.map(line => {
+							for (const line of lines) {
+								if (line.trim()) {
 									try {
-										return JSON.parse(line.trim());
-									} catch {
-										return null;
+										parsedLines.push(JSON.parse(line));
+									} catch (lineError) {
+										console.warn(`Failed to parse line: ${line.substring(0, 100)}...`);
 									}
-								}).filter(Boolean);
-
-								if (parsedLines.length > 0) {
-									console.log(`Successfully parsed ${parsedLines.length} JSON objects from NDJSON`);
-									statusData = {
-										status: 'ready',
-										data: parsedLines
-									};
 								}
+							}
+
+							if (parsedLines.length > 0) {
+								console.log(`Successfully parsed ${parsedLines.length} NDJSON lines`);
+								completedData = { status: 'ready', data: parsedLines };
 							} else {
-								console.warn(`Failed to parse response as JSON: ${responseText.substring(0, 200)}`);
-								retryCount++;
-								continue;
+								throw new Error(`Failed to parse response for batch ${batchIndex + 1}`);
 							}
 						}
-
-						if (!statusData) {
-							console.warn(`No valid statusData parsed for batch ${batchIndex + 1}`);
-							retryCount++;
-							continue;
-						}
-
-						console.log(`Batch ${batchIndex + 1} status:`, statusData.status);
-						console.log(`Batch ${batchIndex + 1} statusData keys:`, Object.keys(statusData));
-						console.log(`Batch ${batchIndex + 1} statusData structure:`, {
-							hasStatus: 'status' in statusData,
-							statusValue: statusData.status,
-							statusType: typeof statusData.status,
-							hasData: 'data' in statusData,
-							dataLength: statusData.data ? statusData.data.length : 'no data'
-						});
-
-						// Handle different status responses
-						if (statusData.status === 'failed') {
-							throw new Error(`BrightData collection failed for batch ${batchIndex + 1}: ${statusData.message || 'Unknown error'}`);
-						}
-
-						if (statusData.status === 'running') {
-							console.log(`Batch ${batchIndex + 1} still processing: ${statusData.message || 'Processing...'}`);
-							retryCount++;
-							continue;
-						}
-
-						// Status is ready, or we have NDJSON data
-						if (statusData.status === 'ready' || statusData.data) {
-							completedData = statusData;
-							break;
-						}
-
-						// If we get here, the status is unknown
-						console.warn(`Unknown status for batch ${batchIndex + 1}:`, statusData);
-						retryCount++;
 					}
 
 					if (!completedData) {
@@ -266,46 +262,14 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 							continue;
 						}
 
-						// Normalize zpid format to match database (ensure .0 suffix)
-						const normalizedZpid = property.zpid.toString().includes('.') ? property.zpid.toString() : `${property.zpid}.0`;
-						console.log(`Normalizing zpid: ${property.zpid} -> ${normalizedZpid}`);
-
-						// Create property object with normalized zpid for database operations
-						const normalizedProperty = { ...property, zpid: normalizedZpid };
-
-						// Insert property details
-						await insertPropertyDetails(this.env.DB, normalizedProperty);
-
-						// Insert photos if available
-						if (property.responsive_photos && Array.isArray(property.responsive_photos)) {
-							await insertPropertyPhotos(this.env.DB, normalizedZpid, property.responsive_photos);
+						// Use the centralized function to store all property details
+						const result = await storePropertyDetailsInDatabase(this.env.DB, property);
+						
+						if (result.success) {
+							totalProcessed++;
+						} else {
+							totalErrors++;
 						}
-
-						// Insert price history if available
-						if (property.price_history && Array.isArray(property.price_history)) {
-							await insertPriceHistory(this.env.DB, normalizedZpid, property.price_history);
-						}
-
-						// Insert tax history if available
-						if (property.tax_history && Array.isArray(property.tax_history)) {
-							await insertTaxHistory(this.env.DB, normalizedZpid, property.tax_history);
-						}
-
-						// Insert schools if available
-						if (property.schools && Array.isArray(property.schools)) {
-							await insertSchools(this.env.DB, normalizedZpid, property.schools);
-						}
-
-						// Mark property as having details
-						await this.env.DB.prepare(`
-							UPDATE properties
-							SET has_details = TRUE, updated_at = CURRENT_TIMESTAMP
-							WHERE zpid = ?
-						`).bind(normalizedZpid).run();
-
-						totalProcessed++;
-						console.log(`✅ Stored details for property ${normalizedZpid}`);
-
 					} catch (error) {
 						totalErrors++;
 						console.error(`❌ Error storing details for property ${property.zpid}:`, error);
@@ -347,31 +311,30 @@ export class ZillowPropertyDetails extends WorkflowEntrypoint<Env, ZillowPropert
 
 			await this.env.ZILLOW_DATA_BUCKET.put(fileName, JSON.stringify(allData, null, 2), {
 				httpMetadata: {
-					contentType: 'application/json',
+					contentType: 'application/json'
 				},
 				customMetadata: metadata
 			});
 
-			console.log('Property details stored to R2 bucket:', fileName);
+			console.log(`Stored detailed data for ${allData.length} properties in R2: ${fileName}`);
 
 			return {
 				fileName,
 				recordCount: allData.length,
-				size: JSON.stringify(allData).length
+				size: JSON.stringify(allData).length,
+				metadata
 			};
 		});
 
 		// Return workflow results
 		return {
 			success: true,
-			requestedCount: zpids.length,
-			validCount: validPropertiesData.length,
 			processedCount: storageResults.totalProcessed,
 			errorCount: storageResults.totalErrors,
-			batchCount: results.length,
-			r2FileName: r2StorageInfo.fileName,
-			r2RecordCount: r2StorageInfo.recordCount,
-			batchDetails: storageResults.batchResults,
+			requestedCount: zpids.length,
+			skippedCount: zpids.length - validPropertiesData.length,
+			batchResults: storageResults.batchResults,
+			r2Storage: r2StorageInfo,
 			completedAt: new Date().toISOString()
 		};
 	}

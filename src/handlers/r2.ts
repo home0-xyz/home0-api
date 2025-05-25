@@ -1,4 +1,4 @@
-import type { Env } from '../types/env';
+import type { Env } from '../shared/types/env';
 
 export async function handleR2Test(req: Request, env: Env): Promise<Response> {
 	if (req.method !== 'POST' && req.method !== 'GET') {
@@ -75,7 +75,7 @@ export async function handleR2Cleanup(req: Request, env: Env): Promise<Response>
 
 	try {
 		const listResult = await env.ZILLOW_DATA_BUCKET.list({ prefix: 'test/' });
-		const deletePromises = listResult.objects.map(obj =>
+		const deletePromises = listResult.objects.map((obj: R2Object) =>
 			env.ZILLOW_DATA_BUCKET.delete(obj.key)
 		);
 
@@ -84,7 +84,7 @@ export async function handleR2Cleanup(req: Request, env: Env): Promise<Response>
 		return Response.json({
 			success: true,
 			message: `Cleaned up ${listResult.objects.length} test files`,
-			deletedFiles: listResult.objects.map(obj => obj.key)
+			deletedFiles: listResult.objects.map((obj: R2Object) => obj.key)
 		});
 
 	} catch (error) {

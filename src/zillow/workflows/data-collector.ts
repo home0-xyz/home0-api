@@ -1,10 +1,10 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
-import type { Env } from '../types/env';
-import type { ZillowCollectionParams } from '../types/workflow';
-import type { BrightDataTriggerResponse } from '../types/zillow';
-import { insertCollection, storePropertiesInDatabase } from '../database/schema';
+import type { Env } from '../../shared/types/env';
+import type { ZillowCollectionParams } from '../../shared/types/workflow';
+import type { BrightDataTriggerResponse } from '../types';
+import { insertCollection, storePropertiesInDatabase } from '../../database/schema';
 
-export class ZillowDataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParams> {
+export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParams> {
 	async run(event: WorkflowEvent<ZillowCollectionParams>, step: WorkflowStep) {
 		const {
 			location,

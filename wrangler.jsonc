@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "workflows-starter",
+	"name": "home0-platform",
 	"main": "src/index.ts",
 	"compatibility_date": "2024-10-22",
 	"observability": {
@@ -12,11 +12,6 @@
 		"head_sampling_rate": 1
 	},
 	"workflows": [
-		{
-			"name": "workflows-starter",
-			"binding": "MY_WORKFLOW",
-			"class_name": "MyWorkflow"
-		},
 		{
 			"name": "zillow-data-collector",
 			"binding": "ZILLOW_DATA_COLLECTOR",

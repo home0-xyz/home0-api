@@ -1,4 +1,4 @@
-import type { Env } from '../types/env';
+import type { Env } from '../shared/types/env';
 
 export async function handleDatabaseCollections(req: Request, env: Env): Promise<Response> {
 	if (req.method !== 'GET') {

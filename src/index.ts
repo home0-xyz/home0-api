@@ -1,26 +1,8 @@
-import type { Env } from './types/env';
-import { MyWorkflow } from './workflows/my-workflow';
-import { ZillowDataCollector } from './workflows/zillow-data-collector';
-import { ZillowPropertyDetails } from './workflows/zillow-property-details';
-import {
-	handleZillowCollect,
-	handleZillowStatus,
-	handleZillowFiles,
-	handleZillowDownload,
-	handleZillowTest81428,
-	handleZillowTest81416
-} from './handlers/zillow';
-import {
-	handleZillowDetailsCollect,
-	handleZillowDetailsStatus,
-	handleZillowDetailsAuto,
-	handleZillowDetailsStats
-} from './handlers/zillow-details';
-import {
-	handleDatabaseCollections,
-	handleDatabaseProperties,
-	handleDatabasePropertyDetails
-} from './handlers/database';
+import type { Env } from './shared/types/env';
+import { DataCollector as ZillowDataCollector } from './zillow/workflows/data-collector';
+import { PropertyDetails as ZillowPropertyDetails } from './zillow/workflows/property-details';
+import { zillowRouter } from './zillow/router';
+import { databaseRouter } from './database/router';
 import {
 	handleR2Test,
 	handleR2Cleanup
@@ -32,8 +14,8 @@ import {
 	handleDebugDownloadReadyData
 } from './handlers/debug';
 
-// Export workflow classes
-export { MyWorkflow, ZillowDataCollector, ZillowPropertyDetails };
+// Export workflow classes - keep old names for compatibility
+export { ZillowDataCollector, ZillowPropertyDetails };
 
 // Main fetch handler
 export default {
@@ -45,59 +27,13 @@ export default {
 			return Response.json({}, { status: 404 });
 		}
 
-		// Zillow data collection endpoints
-		if (url.pathname === '/zillow/collect') {
-			return handleZillowCollect(req, env);
+		// Route to feature-specific routers
+		if (url.pathname.startsWith('/zillow')) {
+			return zillowRouter.handle(req, env);
 		}
 
-		if (url.pathname === '/zillow/status') {
-			return handleZillowStatus(req, env);
-		}
-
-		if (url.pathname === '/zillow/files') {
-			return handleZillowFiles(req, env);
-		}
-
-		if (url.pathname === '/zillow/download') {
-			return handleZillowDownload(req, env);
-		}
-
-		if (url.pathname === '/zillow/test-81428') {
-			return handleZillowTest81428(req, env);
-		}
-
-		if (url.pathname === '/zillow/test-81416') {
-			return handleZillowTest81416(req, env);
-		}
-
-		// Zillow property details endpoints
-		if (url.pathname === '/zillow/details/collect') {
-			return handleZillowDetailsCollect(req, env);
-		}
-
-		if (url.pathname === '/zillow/details/status') {
-			return handleZillowDetailsStatus(req, env);
-		}
-
-		if (url.pathname === '/zillow/details/auto') {
-			return handleZillowDetailsAuto(req, env);
-		}
-
-		if (url.pathname === '/zillow/details/stats') {
-			return handleZillowDetailsStats(req, env);
-		}
-
-		// Database query endpoints
-		if (url.pathname === '/database/collections') {
-			return handleDatabaseCollections(req, env);
-		}
-
-		if (url.pathname === '/database/properties') {
-			return handleDatabaseProperties(req, env);
-		}
-
-		if (url.pathname === '/database/property-details') {
-			return handleDatabasePropertyDetails(req, env);
+		if (url.pathname.startsWith('/database')) {
+			return databaseRouter.handle(req, env);
 		}
 
 		// R2 bucket endpoints
@@ -126,26 +62,14 @@ export default {
 			return handleDebugDownloadReadyData(req, env);
 		}
 
-		// Original workflow endpoints
-		// Get the status of an existing instance, if provided
-		// GET /?instanceId=<id here>
-		const instanceId = url.searchParams.get('instanceId');
-		if (instanceId) {
-			try {
-				const instance = await env.MY_WORKFLOW.get(instanceId);
-				return Response.json({
-					status: await instance.status(),
-				});
-			} catch (error) {
-				return Response.json({ error: 'Instance not found' }, { status: 404 });
-			}
+		// Root endpoint
+		if (url.pathname === '/') {
+			return new Response('Home0 Platform API', {
+				headers: { 'Content-Type': 'text/plain' }
+			});
 		}
 
-		// Spawn a new instance and return the ID and status
-		const instance = await env.MY_WORKFLOW.create();
-		return Response.json({
-			id: instance.id,
-			details: await instance.status(),
-		});
+		// 404 for unknown routes
+		return new Response('Not found', { status: 404 });
 	},
 };

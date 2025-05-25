@@ -66,13 +66,35 @@ async function runTest() {
 				const brightDataResponse = await fetch(`${BASE_URL}/debug/snapshot-status?snapshot_id=${snapshotId}`);
 				const brightDataStatus = await brightDataResponse.json();
 
-				const actualStatus = brightDataStatus.data?.status || brightDataStatus.status;
+				let actualStatus;
+				if (brightDataStatus.status === 200 && brightDataStatus.data) {
+					// HTTP 200 means we got actual data from BrightData
+					if (brightDataStatus.data.error) {
+						actualStatus = 'failed';
+					} else {
+						actualStatus = 'ready';
+					}
+				} else if (brightDataStatus.status === 202) {
+					// HTTP 202 means still processing
+					actualStatus = brightDataStatus.data?.status || 'running';
+				} else {
+					// Fallback to whatever status we got
+					actualStatus = brightDataStatus.data?.status || brightDataStatus.status;
+				}
+
 				console.log(`📊 Check ${attempts}: BrightData Status = ${actualStatus}`);
 
-				if (actualStatus === 'ready' || actualStatus === 'complete') {
+				if (actualStatus === 'ready') {
 					isComplete = true;
 					console.log('\n🎉 BrightData collection completed successfully!');
-					console.log(`📈 Records found: ${brightDataStatus.data?.records || brightDataStatus.records || 'unknown'}\n`);
+
+					// For ready status, count the data records
+					let recordCount = 'unknown';
+					if (brightDataStatus.data && typeof brightDataStatus.data === 'string') {
+						// Count JSONL lines if data is a string
+						recordCount = brightDataStatus.data.trim().split('\n').length;
+					}
+					console.log(`📈 Records found: ${recordCount}\n`);
 
 					// Now wait for workflow to process the data
 					console.log('⏳ Waiting for workflow to process data and move to property details...\n');
@@ -84,7 +106,10 @@ async function runTest() {
 					await showResults();
 				} else if (actualStatus === 'failed') {
 					console.log('\n❌ BrightData collection failed!');
-					console.log('Error details:', brightDataStatus.error || 'No details available');
+					console.log('Error details:', brightDataStatus.data?.error || brightDataStatus.error || 'No details available');
+					if (brightDataStatus.data?.error_code) {
+						console.log('Error code:', brightDataStatus.data.error_code);
+					}
 					break;
 				} else {
 					// Still running, wait before next check

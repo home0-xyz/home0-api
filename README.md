@@ -1,10 +1,19 @@
-# Cloudflare Workflows - Zillow Data Pipeline
+# Home0 Platform - Open Source Real Estate Intelligence
 
-This is a Cloudflare Workflows implementation for collecting and processing Zillow real estate data using the BrightData API. The project includes two main workflows: property listing collection and detailed property information gathering.
+Home0 is an open-source platform that helps people use AI and technology to find homes. Built on Cloudflare Workers with durable Workflows, it currently supports Zillow data collection through the BrightData API.
 
-- Clone this repository to get started with Workflows
-- Read the [Workflows announcement blog](https://blog.cloudflare.com/building-workflows-durable-execution-on-workers/) to learn more about what Workflows is and how to build durable, multi-step applications using the Workflows model.
-- Review the [Workflows developer documentation](https://developers.cloudflare.com/workflows/) to dive deeper into the Workflows API and how it works.
+- Built with [Cloudflare Workflows](https://developers.cloudflare.com/workflows/) for reliable, durable execution
+- Scalable architecture designed to support multiple real estate data sources
+- AI-ready infrastructure for intelligent property search and analysis
+
+## BrightData API Integration
+
+This project uses [BrightData's Zillow Scraping API](https://brightdata.com/cp/scrapers/api/gd_lfqkr8wm13ixtbd8f5) to collect real estate data:
+
+- **Property Search API** - Search for properties by location with various filters
+- **Property Details API** - Get comprehensive property information including photos, history, and nearby schools
+
+For detailed API documentation, see [docs/BRIGHTDATA_API.md](docs/BRIGHTDATA_API.md).
 
 ## Features
 
@@ -144,14 +153,11 @@ The application uses D1 with the following key tables:
 
 ## Deploy it
 
-Deploy it to your own Cloudflare account directly:
-
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/workflows-starter)
-
-You can also create a project using this template by using `npm create cloudflare@latest`:
+Deploy the Home0 platform to your own Cloudflare account:
 
 ```sh
-npm create cloudflare@latest workflows-starter -- --template "cloudflare/workflows-starter"
+npm install
+npm run deploy
 ```
 
 ## Development Setup
@@ -160,7 +166,7 @@ npm create cloudflare@latest workflows-starter -- --template "cloudflare/workflo
 
 ```bash
 git clone <repository>
-cd workflows-starter
+cd home0-platform
 npm install
 ```
 

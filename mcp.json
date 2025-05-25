@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "cloudflare-docs": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://docs.mcp.cloudflare.com/sse"],
+      "description": "Cloudflare documentation search via Vectorize"
+    },
+    "cloudflare-bindings": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://bindings.mcp.cloudflare.com/sse"],
+      "description": "Manage Cloudflare Workers bindings (KV, R2, D1, etc.) with OAuth authentication"
+    }
+  }
+}

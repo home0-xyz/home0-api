@@ -1,12 +1,16 @@
 {
-	"name": "workflows-starter",
-	"version": "0.0.1",
+	"name": "home0-platform",
+	"version": "0.1.0",
+	"description": "Open source platform to help people use AI and technology to find homes",
+	"author": "Home0",
+	"license": "Apache-2.0",
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"start": "wrangler dev"
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20250417.0",
+		"mcp-remote": "^0.1.9",
 		"typescript": "^5.0.4",
 		"wrangler": "^4.16.1"
 	},

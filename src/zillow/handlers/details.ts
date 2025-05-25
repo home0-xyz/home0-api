@@ -1,5 +1,5 @@
-import type { Env } from '../types/env';
-import type { ZillowPropertyDetailsParams } from '../types/workflow';
+import type { Env } from '../../shared/types/env';
+import type { ZillowPropertyDetailsParams } from '../../shared/types/workflow';
 
 interface AutoDetailsRequest {
 	limit?: number;

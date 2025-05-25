@@ -1,5 +1,5 @@
-import type { Env } from '../types/env';
-import type { ZillowCollectionParams } from '../types/workflow';
+import type { Env } from '../../shared/types/env';
+import type { ZillowCollectionParams } from '../../shared/types/workflow';
 
 export async function handleZillowCollect(req: Request, env: Env): Promise<Response> {
 	if (req.method !== 'POST') {
@@ -169,5 +169,69 @@ export async function handleZillowTest81416(req: Request, env: Env): Promise<Res
 			error: 'Failed to start test collection',
 			details: error instanceof Error ? error.message : 'Unknown error'
 		}, { status: 500 });
+	}
+}
+
+export async function handleZillowTest81415(req: Request, env: Env): Promise<Response> {
+	if (req.method !== 'POST' && req.method !== 'GET') {
+		return Response.json({ error: 'Method not allowed' }, { status: 405 });
+	}
+
+	try {
+		const testParams: ZillowCollectionParams = {
+			location: '81415',
+			listingCategory: 'House for sale',
+			daysOnZillow: '7 days',
+			homeType: '',
+			exactAddress: false
+		};
+
+		let instance = await env.ZILLOW_DATA_COLLECTOR.create({ params: testParams });
+
+		return Response.json({
+			id: instance.id,
+			status: await instance.status(),
+			message: `Started test data collection for zip code 81415 (last 7 days)`,
+			testParams,
+			instructions: {
+				checkStatus: `GET /zillow/status?instanceId=${instance.id}`,
+				debugSnapshot: `GET /debug/brightdata/SNAPSHOT_ID`
+			}
+		});
+	} catch (error) {
+		console.error('Error starting test workflow:', error);
+		return Response.json({ error: 'Failed to start test workflow', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
+	}
+}
+
+export async function handleZillowTest81623(req: Request, env: Env): Promise<Response> {
+	if (req.method !== 'POST' && req.method !== 'GET') {
+		return Response.json({ error: 'Method not allowed' }, { status: 405 });
+	}
+
+	try {
+		const testParams: ZillowCollectionParams = {
+			location: '81623',
+			listingCategory: 'House for sale',
+			daysOnZillow: '7 days',
+			homeType: '',
+			exactAddress: false
+		};
+
+		let instance = await env.ZILLOW_DATA_COLLECTOR.create({ params: testParams });
+
+		return Response.json({
+			id: instance.id,
+			status: await instance.status(),
+			message: `Started test data collection for zip code 81623 (Carbondale, CO - last 7 days)`,
+			testParams,
+			instructions: {
+				checkStatus: `GET /zillow/status?instanceId=${instance.id}`,
+				debugSnapshot: `GET /debug/brightdata/SNAPSHOT_ID`
+			}
+		});
+	} catch (error) {
+		console.error('Error starting test workflow:', error);
+		return Response.json({ error: 'Failed to start test workflow', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
 	}
 }
