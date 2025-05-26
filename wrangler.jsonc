@@ -35,7 +35,15 @@
 			"database_name": "zillow-data-db",
 			"database_id": "830966ca-1199-4d48-b8c9-d4b890b3d670"
 		}
-	]
+	],
+	/**
+	 * Cron Triggers
+	 * Run daily monitoring at 8 AM UTC (1 AM MST / 2 AM MDT)
+	 * https://developers.cloudflare.com/workers/configuration/cron-triggers/
+	 */
+	"triggers": {
+		"crons": ["0 8 * * *"]
+	}
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

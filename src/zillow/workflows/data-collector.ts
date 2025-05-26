@@ -3,6 +3,7 @@ import type { Env } from '../../shared/types/env';
 import type { ZillowCollectionParams } from '../../shared/types/workflow';
 import type { BrightDataTriggerResponse } from '../types';
 import { insertCollection, storePropertiesInDatabase } from '../../database/schema';
+import { WorkflowTracker } from '../../shared/workflow-tracker';
 
 export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParams> {
 	async run(event: WorkflowEvent<ZillowCollectionParams>, step: WorkflowStep) {
@@ -14,12 +15,21 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 			exactAddress = false
 		} = event.payload;
 
+		// Initialize workflow tracker
+		const tracker = new WorkflowTracker(this.env);
+		const workflowId = event.instanceId;
+
+		// Log workflow start
+		await step.do('log-workflow-start', async () => {
+			await tracker.createRun(workflowId, 'data_collector', event.payload);
+			await tracker.updateStatus(workflowId, 'running');
+		});
+
+		try {
+
 		// Determine if we're in production (has a public URL)
 		const isProduction = this.env.ENVIRONMENT === 'production' || 
 			(this.env.CF && this.env.CF.routes && this.env.CF.routes.length > 0);
-		
-		// Store workflow ID for webhook mapping
-		const workflowId = event.id || crypto.randomUUID();
 
 		// Step 1: Submit data collection request to BrightData
 		const collectionRequest = await step.do('submit-brightdata-request', async () => {
@@ -319,8 +329,41 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 			};
 		});
 
+		// Step 6: Update workflow tracking with final results
+		await step.do('log-workflow-completion', async () => {
+			// Update workflow metrics
+			await tracker.updateMetrics(workflowId, {
+				totalRequested: 1, // 1 location requested
+				totalProcessed: rawZillowData.length,
+				totalErrors: 0,
+				totalSkipped: 0,
+				r2FilesCreated: 1,
+				r2TotalSizeBytes: storageInfo.size,
+				brightdataSnapshots: [collectionRequest.snapshot_id],
+				webhookUsed: false // Data collector doesn't use webhooks yet
+			});
+
+			// Link to collection
+			await tracker.linkToCollection(workflowId, dbStorageInfo.collectionId);
+
+			// Set output summary
+			const outputSummary = {
+				location,
+				snapshotId: collectionRequest.snapshot_id,
+				recordCount: storageInfo.recordCount,
+				fileName: storageInfo.fileName,
+				dataSize: storageInfo.size,
+				collectionId: dbStorageInfo.collectionId,
+				storedInDatabase: dbStorageInfo.storedRecords
+			};
+			await tracker.setOutputSummary(workflowId, outputSummary);
+
+			// Mark as completed
+			await tracker.updateStatus(workflowId, 'completed');
+		});
+
 		// Return workflow results
-		return {
+		const results = {
 			success: true,
 			location,
 			snapshotId: collectionRequest.snapshot_id,
@@ -331,5 +374,17 @@ export class DataCollector extends WorkflowEntrypoint<Env, ZillowCollectionParam
 			storedInDatabase: dbStorageInfo.storedRecords,
 			completedAt: new Date().toISOString()
 		};
+
+		return results;
+
+		} catch (error) {
+			// Log workflow failure
+			await step.do('log-workflow-error', async () => {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				await tracker.updateStatus(workflowId, 'failed', errorMessage);
+			});
+			
+			throw error; // Re-throw to maintain original error behavior
+		}
 	}
 }

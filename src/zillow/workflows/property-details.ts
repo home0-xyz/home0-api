@@ -3,6 +3,7 @@ import type { Env } from '../../shared/types/env';
 import type { ZillowPropertyDetailsParams } from '../../shared/types/workflow';
 import type { BrightDataTriggerResponse } from '../types';
 import { storePropertyDetailsInDatabase } from '../../database/schema';
+import { WorkflowTracker } from '../../shared/workflow-tracker';
 
 export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetailsParams> {
 	async run(event: WorkflowEvent<ZillowPropertyDetailsParams>, step: WorkflowStep) {
@@ -13,7 +14,19 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 			collectionId
 		} = event.payload;
 
+		// Initialize workflow tracker
+		const tracker = new WorkflowTracker(this.env);
+		const workflowId = event.instanceId;
+
+		// Log workflow start
+		await step.do('log-workflow-start', async () => {
+			await tracker.createRun(workflowId, 'property_details', event.payload);
+			await tracker.updateStatus(workflowId, 'running');
+		});
+
 		console.log(`Starting property details collection for ${zpids.length} properties, batch size: ${batchSize}`);
+
+		try {
 
 		// Step 1: Validate zpids exist in database and get their URLs
 		const validPropertiesData = await step.do('validate-zpids-and-get-urls', async () => {
@@ -349,8 +362,45 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 			};
 		});
 
+		// Step 5: Update workflow tracking with final results
+		await step.do('log-workflow-completion', async () => {
+			// Collect all snapshot IDs from batch results
+			const snapshotIds = results.map(r => r.snapshotId).filter(Boolean);
+
+			// Update workflow metrics
+			await tracker.updateMetrics(workflowId, {
+				totalRequested: zpids.length,
+				totalProcessed: storageResults.totalProcessed,
+				totalErrors: storageResults.totalErrors,
+				totalSkipped: zpids.length - validPropertiesData.length,
+				r2FilesCreated: r2StorageInfo.fileName ? 1 : 0,
+				r2TotalSizeBytes: r2StorageInfo.size || 0,
+				brightdataSnapshots: snapshotIds,
+				webhookUsed: true // Property details uses webhooks
+			});
+
+			// Link to collection if provided
+			if (collectionId) {
+				await tracker.linkToCollection(workflowId, collectionId);
+			}
+
+			// Set output summary
+			const outputSummary = {
+				processedCount: storageResults.totalProcessed,
+				errorCount: storageResults.totalErrors,
+				requestedCount: zpids.length,
+				skippedCount: zpids.length - validPropertiesData.length,
+				batchResults: storageResults.batchResults,
+				r2Storage: r2StorageInfo
+			};
+			await tracker.setOutputSummary(workflowId, outputSummary);
+
+			// Mark as completed
+			await tracker.updateStatus(workflowId, 'completed');
+		});
+
 		// Return workflow results
-		return {
+		const finalResults = {
 			success: true,
 			processedCount: storageResults.totalProcessed,
 			errorCount: storageResults.totalErrors,
@@ -360,5 +410,17 @@ export class PropertyDetails extends WorkflowEntrypoint<Env, ZillowPropertyDetai
 			r2Storage: r2StorageInfo,
 			completedAt: new Date().toISOString()
 		};
+
+		return finalResults;
+
+		} catch (error) {
+			// Log workflow failure
+			await step.do('log-workflow-error', async () => {
+				const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+				await tracker.updateStatus(workflowId, 'failed', errorMessage);
+			});
+			
+			throw error; // Re-throw to maintain original error behavior
+		}
 	}
 }

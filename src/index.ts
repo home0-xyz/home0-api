@@ -13,7 +13,20 @@ import {
 	handleDebugSnapshotStatus,
 	handleDebugDownloadReadyData
 } from './handlers/debug';
+import {
+	handleWorkflowsList,
+	handleWorkflowGet,
+	handleWorkflowStats,
+	handleActiveWorkflows
+} from './handlers/workflows';
+import {
+	handleMonitoringTrigger,
+	handleMonitoringHistory,
+	handlePropertyChanges,
+	handleChangeSummary
+} from './handlers/monitoring';
 import { requireApiKey, shouldRequireApiKey } from './shared/auth';
+import scheduledHandler from './scheduled';
 
 // Export workflow classes - keep old names for compatibility
 export { ZillowDataCollector, ZillowPropertyDetails };
@@ -71,6 +84,40 @@ export default {
 			return handleDebugDownloadReadyData(req, env);
 		}
 
+		// Workflow tracking endpoints
+		if (url.pathname === '/workflows') {
+			return handleWorkflowsList(req, env);
+		}
+
+		if (url.pathname === '/workflows/get') {
+			return handleWorkflowGet(req, env);
+		}
+
+		if (url.pathname === '/workflows/stats') {
+			return handleWorkflowStats(req, env);
+		}
+
+		if (url.pathname === '/workflows/active') {
+			return handleActiveWorkflows(req, env);
+		}
+
+		// Monitoring endpoints
+		if (url.pathname === '/monitoring/trigger') {
+			return handleMonitoringTrigger(req, env);
+		}
+
+		if (url.pathname === '/monitoring/history') {
+			return handleMonitoringHistory(req, env);
+		}
+
+		if (url.pathname === '/monitoring/changes') {
+			return handlePropertyChanges(req, env);
+		}
+
+		if (url.pathname === '/monitoring/summary') {
+			return handleChangeSummary(req, env);
+		}
+
 		// Root endpoint
 		if (url.pathname === '/') {
 			return new Response('Home0 Platform API', {
@@ -81,4 +128,7 @@ export default {
 		// 404 for unknown routes
 		return new Response('Not found', { status: 404 });
 	},
+	
+	// Scheduled handler for cron jobs
+	scheduled: scheduledHandler.scheduled
 };
