@@ -42,6 +42,11 @@ export function shouldRequireApiKey(pathname: string): boolean {
 		return false;
 	}
 	
+	// Favorites API uses Clerk authentication
+	if (pathname.startsWith('/api/favorites')) {
+		return false;
+	}
+	
 	// Health check endpoint (if you add one)
 	if (pathname === '/health') {
 		return false;

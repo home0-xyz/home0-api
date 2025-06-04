@@ -1,0 +1,53 @@
+{
+  "name": "home0-api",
+  "compatibility_date": "2024-10-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "src/index.ts",
+  
+  // Production routes
+  "routes": [
+    {
+      "pattern": "api.home0.xyz/*",
+      "zone_name": "home0.xyz"
+    }
+  ],
+
+  // D1 Database bindings
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zillow-data-db",
+      "database_id": "YOUR_PRODUCTION_DATABASE_ID"
+    }
+  ],
+
+  // R2 bucket binding
+  "r2_buckets": [
+    {
+      "binding": "R2_BUCKET",
+      "bucket_name": "zillow-data-pipeline"
+    }
+  ],
+
+  // Workflow bindings
+  "workflows": [
+    {
+      "binding": "MY_WORKFLOW",
+      "class_name": "DataCollector"
+    },
+    {
+      "binding": "ZILLOW_DATA_COLLECTOR",
+      "class_name": "ZillowDataCollector"
+    },
+    {
+      "binding": "ZILLOW_PROPERTY_DETAILS",
+      "class_name": "ZillowPropertyDetails"
+    }
+  ],
+
+  // Environment variables (set these in Cloudflare dashboard)
+  "vars": {
+    // API_KEY should be set in dashboard for security
+    // BRIGHTDATA_API_TOKEN should be set in dashboard for security
+  }
+}

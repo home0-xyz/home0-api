@@ -3,6 +3,8 @@ import { DataCollector as ZillowDataCollector } from './zillow/workflows/data-co
 import { PropertyDetails as ZillowPropertyDetails } from './zillow/workflows/property-details';
 import { zillowRouter } from './zillow/router';
 import { databaseRouter } from './database/router';
+import { favoritesRouter } from './favorites/router';
+// import { favoritesRouterNoAuth as favoritesRouter } from './favorites/router-no-auth'; // TEMPORARY: No auth for testing
 import {
 	handleR2Test,
 	handleR2Cleanup
@@ -31,10 +33,15 @@ import scheduledHandler from './scheduled';
 // Export workflow classes - keep old names for compatibility
 export { ZillowDataCollector, ZillowPropertyDetails };
 
+// Request counter for logging
+let requestCount = 0;
+
 // Main fetch handler
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> {
 		const url = new URL(req.url);
+		const requestId = ++requestCount;
+		console.log(`\n[REQUEST #${requestId}] ${req.method} ${url.pathname}${url.search}`);
 
 		// Favicon - return 404
 		if (url.pathname.startsWith('/favicon')) {
@@ -56,6 +63,10 @@ export default {
 
 		if (url.pathname.startsWith('/database')) {
 			return databaseRouter.handle(req, env);
+		}
+
+		if (url.pathname.startsWith('/api/favorites')) {
+			return favoritesRouter.handle(req, env);
 		}
 
 		// R2 bucket endpoints

@@ -106,3 +106,7 @@ Cloudflare resources configured in `wrangler.jsonc`:
 - BrightData API returns JSONL format (newline-delimited JSON)
 - Poll BrightData progress endpoint every 30 seconds until data is ready
 - Handle "Snapshot does not exist" errors with retries (snapshot still initializing)
+
+## CLI Memories
+
+- don't restart the server, I'll do this on my own
